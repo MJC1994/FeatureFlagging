@@ -93,6 +93,7 @@ function Shell() {
               type="button"
               className={`nav__item ${view === item.id ? 'nav__item--active' : ''}`}
               onClick={() => setView(item.id)}
+              data-tour={`nav-${item.id}`}
             >
               {item.icon}
               <span>{item.label}</span>
@@ -100,7 +101,7 @@ function Shell() {
           ))}
         </nav>
 
-        <div className="sidebar__user">
+        <div className="sidebar__user" data-tour="acting-as">
           <label className="field">
             <span>Acting as</span>
             <select

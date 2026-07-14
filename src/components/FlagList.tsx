@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { BRANDS } from '../types';
 import type { Brand, Environment, FeatureFlag } from '../types';
 import { useStore } from '../store/StoreContext';
@@ -14,6 +14,9 @@ import { AddFlagModal } from './AddFlagModal';
 import { EditFlagModal } from './EditFlagModal';
 import { PublishChangesModal } from './PublishChangesModal';
 import { ConfirmDialog } from './Modal';
+import { PageTour } from './PageTour';
+
+const DEMO_BRAND: Brand = 'Southeastern';
 
 export function FlagList() {
   const {
@@ -25,6 +28,7 @@ export function FlagList() {
     deleteFlag,
     stageToggle,
     discardChanges,
+    publishChanges,
     getEffectiveValue,
     isPending,
   } = useStore();
@@ -37,6 +41,7 @@ export function FlagList() {
   const [editing, setEditing] = useState<FeatureFlag | null>(null);
   const [showPublish, setShowPublish] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<FeatureFlag | null>(null);
+  const [demoFlagId, setDemoFlagId] = useState<string | null>(null);
 
   const pendingCount = state.pendingChanges.length;
 
@@ -60,7 +65,8 @@ export function FlagList() {
       }
 
       if (words.length > 0) {
-        const hay = `${flag.name} ${flag.description} ${flag.tags.join(' ')}`.toLowerCase();
+        const hay =
+          `${flag.name} ${flag.description} ${flag.tags.join(' ')}`.toLowerCase();
         if (!words.every((w) => hay.includes(w))) return false;
       }
 
@@ -75,6 +81,65 @@ export function FlagList() {
   const canDelete = canDeleteFlag(role);
   const canStage = canEditStage(role);
   const canProd = canEditProduction(role);
+
+  const pickDemoFlag = useCallback((): FeatureFlag | undefined => {
+    return (
+      state.flags.find((f) => f.id === demoFlagId) ??
+      state.flags.find((f) => f.status === 'Active') ??
+      state.flags[0]
+    );
+  }, [state.flags, demoFlagId]);
+
+  const handleDemoAction = useCallback(
+    (action: string) => {
+      const flag = pickDemoFlag();
+
+      if (action === 'cleanup') {
+        setShowPublish(false);
+        return;
+      }
+
+      if (action === 'expandFlag' || action === 'prepareToggle') {
+        setSearch('');
+        setSelectedTags([]);
+        setShowDeprecated(false);
+        if (flag) {
+          setDemoFlagId(flag.id);
+          setExpandedId(flag.id);
+        }
+        return;
+      }
+
+      if (action === 'toggleStage' || action === 'ensurePending') {
+        if (!flag || !canStage) return;
+        setDemoFlagId(flag.id);
+        setExpandedId(flag.id);
+        if (!isPending(flag.id, DEMO_BRAND, 'Stage')) {
+          const current = getEffectiveValue(flag.id, DEMO_BRAND, 'Stage');
+          stageToggle(flag.id, DEMO_BRAND, 'Stage', !current);
+        }
+        return;
+      }
+
+      if (action === 'openPublish') {
+        setShowPublish(true);
+        return;
+      }
+
+      if (action === 'publish') {
+        publishChanges();
+        setShowPublish(false);
+      }
+    },
+    [
+      pickDemoFlag,
+      canStage,
+      isPending,
+      getEffectiveValue,
+      stageToggle,
+      publishChanges,
+    ],
+  );
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) =>
@@ -103,11 +168,13 @@ export function FlagList() {
           </p>
         </div>
         <div className="view__actions">
+          <PageTour page="flags" onDemoAction={handleDemoAction} />
           {canCreate && (
             <button
               type="button"
               className="btn btn--primary"
               onClick={() => setShowAdd(true)}
+              data-tour="flags-add"
             >
               Add flag
             </button>
@@ -115,7 +182,7 @@ export function FlagList() {
         </div>
       </header>
 
-      <div className="toolbar">
+      <div className="toolbar" data-tour="flags-search">
         <input
           className="search"
           type="search"
@@ -134,7 +201,7 @@ export function FlagList() {
       </div>
 
       {allTags.length > 0 && (
-        <div className="tag-filter">
+        <div className="tag-filter" data-tour="flags-tags">
           <span className="tag-filter__label">Tags:</span>
           {allTags.map((tag) => (
             <button
@@ -158,12 +225,13 @@ export function FlagList() {
         </div>
       )}
 
-      <div className="flag-list">
+      <div className="flag-list" data-tour="flags-list">
         {filtered.length === 0 ? (
           <p className="empty-state">No flags match your filters.</p>
         ) : (
           filtered.map((flag) => {
             const expanded = expandedId === flag.id;
+            const isDemoFlag = flag.id === (demoFlagId ?? filtered[0]?.id);
             return (
               <article
                 key={flag.id}
@@ -172,9 +240,7 @@ export function FlagList() {
                 <button
                   type="button"
                   className="flag-row__summary"
-                  onClick={() =>
-                    setExpandedId(expanded ? null : flag.id)
-                  }
+                  onClick={() => setExpandedId(expanded ? null : flag.id)}
                 >
                   <span className="flag-row__chevron" aria-hidden="true">
                     {expanded ? '▾' : '▸'}
@@ -224,7 +290,8 @@ export function FlagList() {
                             )
                           }
                         >
-                          Mark {flag.status === 'Active' ? 'Deprecated' : 'Active'}
+                          Mark{' '}
+                          {flag.status === 'Active' ? 'Deprecated' : 'Active'}
                         </button>
                       )}
                       {canDelete && (
@@ -255,6 +322,11 @@ export function FlagList() {
                               on={getEffectiveValue(flag.id, brand, 'Stage')}
                               pending={isPending(flag.id, brand, 'Stage')}
                               disabled={!canStage}
+                              dataTour={
+                                isDemoFlag && brand === DEMO_BRAND
+                                  ? 'demo-stage-toggle'
+                                  : undefined
+                              }
                               onRequest={(value) =>
                                 requestToggle(flag, brand, 'Stage', value)
                               }
@@ -268,19 +340,10 @@ export function FlagList() {
                                 brand,
                                 'Production',
                               )}
-                              pending={isPending(
-                                flag.id,
-                                brand,
-                                'Production',
-                              )}
+                              pending={isPending(flag.id, brand, 'Production')}
                               disabled={!canProd}
                               onRequest={(value) =>
-                                requestToggle(
-                                  flag,
-                                  brand,
-                                  'Production',
-                                  value,
-                                )
+                                requestToggle(flag, brand, 'Production', value)
                               }
                             />
                           </div>
@@ -296,7 +359,7 @@ export function FlagList() {
       </div>
 
       {pendingCount > 0 && (
-        <div className="publish-bar">
+        <div className="publish-bar" data-tour="flags-publish-bar">
           <div className="publish-bar__text">
             <strong>{pendingCount}</strong> unpublished change
             {pendingCount === 1 ? '' : 's'}
@@ -312,6 +375,7 @@ export function FlagList() {
             <button
               type="button"
               className="btn btn--primary"
+              data-tour="flags-publish-btn"
               onClick={() => setShowPublish(true)}
             >
               Publish changes
@@ -366,12 +430,14 @@ function Toggle({
   on,
   pending,
   disabled,
+  dataTour,
   onRequest,
 }: {
   environment: Environment;
   on: boolean;
   pending?: boolean;
   disabled?: boolean;
+  dataTour?: string;
   onRequest: (value: boolean) => void;
 }) {
   const envClass =
@@ -384,6 +450,7 @@ function Toggle({
       aria-pressed={on}
       aria-label={`${environment} ${on ? 'on' : 'off'}`}
       title={pending ? 'Staged — publish to apply' : environment}
+      data-tour={dataTour}
       onClick={() => onRequest(!on)}
     >
       <span className="toggle__knob" />

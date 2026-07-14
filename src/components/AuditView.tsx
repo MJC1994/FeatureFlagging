@@ -3,6 +3,7 @@ import { BRANDS } from '../types';
 import type { AuditActionType, Brand } from '../types';
 import { useStore } from '../store/StoreContext';
 import { AUDIT_ACTION_LABELS } from '../permissions';
+import { PageTour } from './PageTour';
 
 const ACTION_TYPES = Object.keys(AUDIT_ACTION_LABELS) as AuditActionType[];
 
@@ -40,9 +41,12 @@ export function AuditView() {
             Every change, newest first — filter by user, brand, flag, or action
           </p>
         </div>
+        <div className="view__actions">
+          <PageTour page="audit" />
+        </div>
       </header>
 
-      <div className="filters">
+      <div className="filters" data-tour="audit-filters">
         <label className="field">
           <span>User</span>
           <select
@@ -104,9 +108,11 @@ export function AuditView() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="empty-state">No audit entries match your filters.</p>
+        <p className="empty-state" data-tour="audit-list">
+          No audit entries match your filters.
+        </p>
       ) : (
-        <ul className="audit-list">
+        <ul className="audit-list" data-tour="audit-list">
           {filtered.map((entry) => (
             <li key={entry.id} className="audit-item">
               <div className="audit-item__top">

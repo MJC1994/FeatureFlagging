@@ -5,6 +5,7 @@ import type { BrandConfig } from '../configTypes';
 import { useStore } from '../store/StoreContext';
 import { canEditProduction, canEditStage } from '../permissions';
 import { cloneConfig } from '../configDefaults';
+import { PageTour } from './PageTour';
 
 export function ConfigView() {
   const { state, currentUser, updateBrandConfig } = useStore();
@@ -86,10 +87,13 @@ export function ConfigView() {
             webchat, timeouts, …)
           </p>
         </div>
+        <div className="view__actions">
+          <PageTour page="config" />
+        </div>
       </header>
 
       <div className="toolbar config-toolbar">
-        <label className="field field--inline">
+        <label className="field field--inline" data-tour="config-brand">
           <span>Brand</span>
           <select
             value={brand}
@@ -102,7 +106,7 @@ export function ConfigView() {
             ))}
           </select>
         </label>
-        <label className="field field--inline">
+        <label className="field field--inline" data-tour="config-environment">
           <span>Environment</span>
           <select
             value={environment}
@@ -128,7 +132,7 @@ export function ConfigView() {
         </p>
       )}
 
-      <form className="config-form" onSubmit={handleSave}>
+      <form className="config-form" onSubmit={handleSave} data-tour="config-form">
         <section className="config-section">
           <h2>API timeouts</h2>
           <div className="config-grid">

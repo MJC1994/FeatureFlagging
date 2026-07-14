@@ -4,6 +4,7 @@ import type { Brand } from '../types';
 import { useStore } from '../store/StoreContext';
 import { canRevert } from '../permissions';
 import { RevertPreviewModal } from './RevertPreviewModal';
+import { PageTour } from './PageTour';
 
 export function HistoryView() {
   const { state, currentUser } = useStore();
@@ -27,6 +28,9 @@ export function HistoryView() {
             Configuration snapshots per brand — review the diff, then confirm
           </p>
         </div>
+        <div className="view__actions">
+          <PageTour page="history" />
+        </div>
       </header>
 
       {!allowRevert && (
@@ -36,7 +40,7 @@ export function HistoryView() {
       )}
 
       <div className="toolbar">
-        <label className="field field--inline">
+        <label className="field field--inline" data-tour="history-brand">
           <span>Brand</span>
           <select
             value={brand}
@@ -52,12 +56,12 @@ export function HistoryView() {
       </div>
 
       {snapshots.length === 0 ? (
-        <p className="empty-state">
+        <p className="empty-state" data-tour="history-list">
           No snapshots yet for {brand}. Changes to this brand&apos;s flags will
           appear here.
         </p>
       ) : (
-        <ul className="history-list">
+        <ul className="history-list" data-tour="history-list">
           {snapshots.map((snap) => {
             const flagCount = Object.keys(snap.states).length;
             return (

@@ -4,6 +4,7 @@ import type { Role } from '../types';
 import { useStore } from '../store/StoreContext';
 import { canManageUsers } from '../permissions';
 import { ConfirmDialog } from './Modal';
+import { PageTour } from './PageTour';
 
 export function UsersView() {
   const {
@@ -36,16 +37,23 @@ export function UsersView() {
             Invite teammates and assign Developer, Admin, or Owner roles
           </p>
         </div>
+        <div className="view__actions">
+          <PageTour page="users" />
+        </div>
       </header>
 
       {!canManage && (
-        <p className="banner banner--info">
+        <p className="banner banner--info" data-tour="users-invite">
           Only Owners can manage users. You can view the current roster.
         </p>
       )}
 
       {canManage && (
-        <form className="invite-form" onSubmit={handleInvite}>
+        <form
+          className="invite-form"
+          onSubmit={handleInvite}
+          data-tour="users-invite"
+        >
           <label className="field">
             <span>Email</span>
             <input
@@ -75,7 +83,7 @@ export function UsersView() {
         </form>
       )}
 
-      <table className="data-table">
+      <table className="data-table" data-tour="users-table">
         <thead>
           <tr>
             <th>Email</th>
