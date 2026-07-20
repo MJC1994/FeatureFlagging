@@ -1,0 +1,9 @@
+# Google OAuth (Web application client)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Random secret used to sign session cookies (e.g. openssl rand -hex 32)
+SESSION_SECRET=
+
+# Optional: your real @ontrackretail.co.uk email, auto-added as Owner so you can sign in
+BOOTSTRAP_OWNER_EMAIL=

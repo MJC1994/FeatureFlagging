@@ -8,23 +8,19 @@ import {
   type ReactNode,
 } from 'react';
 import { v4 as uuid } from 'uuid';
-import { BRANDS } from '../types';
+import { api, ApiError, type ServerState } from '../api/client';
 import type {
   AppState,
-  AuditEntry,
-  AuditActionType,
   Brand,
-  BrandSnapshot,
   Environment,
-  FeatureFlag,
   FlagStatus,
   PendingChange,
   Role,
   User,
 } from '../types';
 import type { BrandConfig } from '../configTypes';
-import { createInitialState, emptyStates, STORAGE_KEY } from './initialData';
-import { cloneConfig, emptyBrandConfig } from '../configDefaults';
+
+const PENDING_KEY = 'flagdeck-pending-v1';
 
 function pendingKey(
   flagId: string,
@@ -34,25 +30,42 @@ function pendingKey(
   return `${flagId}::${brand}::${environment}`;
 }
 
+function loadPending(): PendingChange[] {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (raw) return JSON.parse(raw) as PendingChange[];
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 type StoreContextValue = {
   state: AppState;
-  currentUser: User;
+  currentUser: User | null;
+  authenticated: boolean;
+  authReady: boolean;
+  googleEnabled: boolean;
+  allowedDomain: string;
+  loading: boolean;
+  error: string | null;
+  authError: string | null;
+  logout: () => Promise<void>;
   // Flags
-  createFlag: (name: string, description: string, tags: string[]) => void;
+  createFlag: (name: string, description: string, tags: string[]) => Promise<void>;
   updateFlag: (
     id: string,
     patch: { name?: string; description?: string; tags?: string[] },
-  ) => void;
-  setFlagStatus: (id: string, status: FlagStatus) => void;
-  deleteFlag: (id: string) => void;
-  /** Stage an on/off change into the publish draft (does not apply yet). */
+  ) => Promise<void>;
+  setFlagStatus: (id: string, status: FlagStatus) => Promise<void>;
+  deleteFlag: (id: string) => Promise<void>;
   stageToggle: (
     flagId: string,
     brand: Brand,
     environment: Environment,
     value: boolean,
   ) => void;
-  publishChanges: () => void;
+  publishChanges: () => Promise<void>;
   discardChanges: () => void;
   getEffectiveValue: (
     flagId: string,
@@ -64,249 +77,198 @@ type StoreContextValue = {
     brand: Brand,
     environment: Environment,
   ) => boolean;
-  // Config
   updateBrandConfig: (
     brand: Brand,
     environment: Environment,
     config: BrandConfig,
     warnings: string[],
-  ) => void;
-  // Users
-  addUser: (email: string, role: Role) => void;
-  changeUserRole: (userId: string, role: Role) => void;
-  removeUser: (userId: string) => void;
-  setCurrentUser: (userId: string) => void;
-  // History
-  revertBrand: (snapshotId: string) => void;
+  ) => Promise<void>;
+  addUser: (email: string, role: Role) => Promise<void>;
+  changeUserRole: (userId: string, role: Role) => Promise<void>;
+  removeUser: (userId: string) => Promise<void>;
+  revertBrand: (snapshotId: string) => Promise<void>;
 };
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
-function loadState(): AppState {
+const emptyState: AppState = {
+  currentUserId: '',
+  users: [],
+  flags: [],
+  configs: {} as AppState['configs'],
+  auditLog: [],
+  history: [],
+  pendingChanges: [],
+};
+
+function readAuthErrorFromUrl(): string | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AppState>;
-      const base = createInitialState();
-      return {
-        ...base,
-        ...parsed,
-        users: parsed.users ?? base.users,
-        flags: parsed.flags ?? base.flags,
-        configs: parsed.configs ?? base.configs,
-        auditLog: parsed.auditLog ?? base.auditLog,
-        history: parsed.history ?? base.history,
-        currentUserId: parsed.currentUserId ?? base.currentUserId,
-        pendingChanges: parsed.pendingChanges ?? [],
-      };
-    }
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('auth_error');
+    if (!code) return null;
+    params.delete('auth_error');
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
+    window.history.replaceState({}, '', next);
+    return code;
   } catch {
-    /* ignore corrupt storage */
+    return null;
   }
-  return createInitialState();
-}
-
-function snapshotBrand(
-  state: AppState,
-  brand: Brand,
-  user: User,
-  label: string,
-): BrandSnapshot {
-  const states: BrandSnapshot['states'] = {};
-  for (const flag of state.flags) {
-    states[flag.id] = {
-      Stage: flag.states[brand].Stage,
-      Production: flag.states[brand].Production,
-    };
-  }
-  return {
-    id: uuid(),
-    brand,
-    timestamp: new Date().toISOString(),
-    userId: user.id,
-    userEmail: user.email,
-    label,
-    states,
-  };
-}
-
-function audit(
-  user: User,
-  action: AuditActionType,
-  summary: string,
-  extras: Partial<AuditEntry> = {},
-): AuditEntry {
-  return {
-    id: uuid(),
-    timestamp: new Date().toISOString(),
-    userId: user.id,
-    userEmail: user.email,
-    action,
-    summary,
-    ...extras,
-  };
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(loadState);
+  const [state, setState] = useState<AppState>(() => ({
+    ...emptyState,
+    pendingChanges: loadPending(),
+  }));
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [allowedDomain, setAllowedDomain] = useState('ontrackretail.co.uk');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [authError] = useState<string | null>(() => readAuthErrorFromUrl());
+
+  const applyServer = useCallback((server: ServerState, user: User) => {
+    setState((prev) => {
+      const flagIds = new Set(server.flags.map((f) => f.id));
+      const pendingChanges = prev.pendingChanges.filter((c) =>
+        flagIds.has(c.flagId),
+      );
+      return {
+        ...server,
+        currentUserId: user.id,
+        pendingChanges,
+      };
+    });
+    setCurrentUser(user);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const config = await api.authConfig();
+        if (cancelled) return;
+        setGoogleEnabled(config.googleEnabled);
+        setAllowedDomain(config.allowedDomain);
 
-  const currentUser = useMemo(() => {
-    return (
-      state.users.find((u) => u.id === state.currentUserId) ?? state.users[0]
-    );
-  }, [state.users, state.currentUserId]);
+        if (!config.googleEnabled) {
+          setCurrentUser(null);
+          setLoading(false);
+          setAuthReady(true);
+          return;
+        }
+
+        const user = await api.me();
+        if (cancelled) return;
+
+        if (!user) {
+          setCurrentUser(null);
+          setLoading(false);
+          setAuthReady(true);
+          return;
+        }
+
+        const server = await api.getState();
+        if (cancelled) return;
+        applyServer(server, user);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 401) {
+          setCurrentUser(null);
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to load');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setAuthReady(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyServer]);
+
+  useEffect(() => {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(state.pendingChanges));
+  }, [state.pendingChanges]);
+
+  const withSession = useCallback(
+    async (fn: () => Promise<ServerState>) => {
+      if (!currentUser) throw new Error('Not signed in');
+      try {
+        const server = await fn();
+        applyServer(server, currentUser);
+        setError(null);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          setCurrentUser(null);
+        }
+        const message = err instanceof Error ? err.message : 'Request failed';
+        setError(message);
+        throw err;
+      }
+    },
+    [applyServer, currentUser],
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } finally {
+      setCurrentUser(null);
+      setState((prev) => ({
+        ...emptyState,
+        pendingChanges: prev.pendingChanges,
+      }));
+    }
+  }, []);
 
   const createFlag = useCallback(
-    (name: string, description: string, tags: string[]) => {
-      const now = new Date().toISOString();
-      const flag: FeatureFlag = {
-        id: uuid(),
-        name: name.trim(),
-        description: description.trim(),
-        tags: tags.map((t) => t.trim()).filter(Boolean),
-        status: 'Active',
-        states: emptyStates(),
-        createdAt: now,
-        updatedAt: now,
-      };
-      setState((prev) => {
-        const user =
-          prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-        const next = { ...prev, flags: [...prev.flags, flag] };
-        const snaps = BRANDS.map((brand) =>
-          snapshotBrand(next, brand, user, `Created flag "${flag.name}"`),
-        );
-        return {
-          ...next,
-          history: [...snaps, ...prev.history],
-          auditLog: [
-            audit(user, 'flag_create', `Created flag "${flag.name}"`, {
-              flagId: flag.id,
-              flagName: flag.name,
-              after: JSON.stringify({
-                name: flag.name,
-                description: flag.description,
-                tags: flag.tags,
-              }),
-            }),
-            ...prev.auditLog,
-          ],
-        };
-      });
+    async (name: string, description: string, tags: string[]) => {
+      await withSession(() => api.createFlag(name, description, tags));
     },
-    [],
+    [withSession],
   );
 
   const updateFlag = useCallback(
-    (
+    async (
       id: string,
       patch: { name?: string; description?: string; tags?: string[] },
     ) => {
-      setState((prev) => {
-        const user =
-          prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-        const existing = prev.flags.find((f) => f.id === id);
-        if (!existing) return prev;
-        const updated: FeatureFlag = {
-          ...existing,
-          ...patch,
-          updatedAt: new Date().toISOString(),
-        };
-        return {
+      await withSession(() => api.updateFlag(id, patch));
+      if (patch.name) {
+        setState((prev) => ({
           ...prev,
-          flags: prev.flags.map((f) => (f.id === id ? updated : f)),
           pendingChanges: prev.pendingChanges.map((c) =>
-            c.flagId === id && patch.name
-              ? { ...c, flagName: patch.name }
-              : c,
+            c.flagId === id ? { ...c, flagName: patch.name! } : c,
           ),
-          auditLog: [
-            audit(user, 'flag_edit', `Edited flag "${existing.name}"`, {
-              flagId: id,
-              flagName: existing.name,
-              before: JSON.stringify({
-                name: existing.name,
-                description: existing.description,
-                tags: existing.tags,
-              }),
-              after: JSON.stringify({
-                name: updated.name,
-                description: updated.description,
-                tags: updated.tags,
-              }),
-            }),
-            ...prev.auditLog,
-          ],
-        };
-      });
+        }));
+      }
     },
-    [],
+    [withSession],
   );
 
-  const setFlagStatus = useCallback((id: string, status: FlagStatus) => {
-    setState((prev) => {
-      const user =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const existing = prev.flags.find((f) => f.id === id);
-      if (!existing || existing.status === status) return prev;
-      return {
-        ...prev,
-        flags: prev.flags.map((f) =>
-          f.id === id
-            ? { ...f, status, updatedAt: new Date().toISOString() }
-            : f,
-        ),
-        auditLog: [
-          audit(
-            user,
-            'flag_status',
-            `Changed status of "${existing.name}" to ${status}`,
-            {
-              flagId: id,
-              flagName: existing.name,
-              before: existing.status,
-              after: status,
-            },
-          ),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
+  const setFlagStatus = useCallback(
+    async (id: string, status: FlagStatus) => {
+      await withSession(() => api.setFlagStatus(id, status));
+    },
+    [withSession],
+  );
 
-  const deleteFlag = useCallback((id: string) => {
-    setState((prev) => {
-      const user =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const existing = prev.flags.find((f) => f.id === id);
-      if (!existing) return prev;
-      const nextFlags = prev.flags.filter((f) => f.id !== id);
-      const next = {
+  const deleteFlag = useCallback(
+    async (id: string) => {
+      await withSession(() => api.deleteFlag(id));
+      setState((prev) => ({
         ...prev,
-        flags: nextFlags,
         pendingChanges: prev.pendingChanges.filter((c) => c.flagId !== id),
-      };
-      const snaps = BRANDS.map((brand) =>
-        snapshotBrand(next, brand, user, `Deleted flag "${existing.name}"`),
-      );
-      return {
-        ...next,
-        history: [...snaps, ...prev.history],
-        auditLog: [
-          audit(user, 'flag_delete', `Deleted flag "${existing.name}"`, {
-            flagId: id,
-            flagName: existing.name,
-            before: JSON.stringify(existing),
-          }),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
+      }));
+    },
+    [withSession],
+  );
 
   const stageToggle = useCallback(
     (
@@ -324,7 +286,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           (c) => pendingKey(c.flagId, c.brand, c.environment) !== key,
         );
 
-        // Toggling back to published value clears the draft entry
         if (value === published) {
           return { ...prev, pendingChanges: without };
         }
@@ -371,70 +332,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [state.pendingChanges],
   );
 
-  const publishChanges = useCallback(() => {
-    setState((prev) => {
-      if (prev.pendingChanges.length === 0) return prev;
-      const user =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const now = new Date().toISOString();
-
-      let nextFlags = prev.flags.map((flag) => {
-        const relevant = prev.pendingChanges.filter((c) => c.flagId === flag.id);
-        if (relevant.length === 0) return flag;
-        let states = flag.states;
-        for (const change of relevant) {
-          states = {
-            ...states,
-            [change.brand]: {
-              ...states[change.brand],
-              [change.environment]: change.after,
-            },
-          };
-        }
-        return { ...flag, states, updatedAt: now };
-      });
-
-      const next: AppState = {
-        ...prev,
-        flags: nextFlags,
-        pendingChanges: [],
-      };
-
-      const affectedBrands = [
-        ...new Set(prev.pendingChanges.map((c) => c.brand)),
-      ];
-      const snaps = affectedBrands.map((brand) =>
-        snapshotBrand(
-          next,
-          brand,
-          user,
-          `Published ${prev.pendingChanges.filter((c) => c.brand === brand).length} change(s)`,
-        ),
-      );
-
-      const audits = prev.pendingChanges.map((change) =>
-        audit(
-          user,
-          'flag_toggle',
-          `Published "${change.flagName}" ${change.after ? 'ON' : 'OFF'}`,
-          {
-            flagId: change.flagId,
-            flagName: change.flagName,
-            brand: change.brand,
-            environment: change.environment,
-            before: change.before ? 'ON' : 'OFF',
-            after: change.after ? 'ON' : 'OFF',
-          },
-        ),
-      );
-
-      return {
-        ...next,
-        history: [...snaps, ...prev.history],
-        auditLog: [...audits, ...prev.auditLog],
-      };
-    });
-  }, []);
+  const publishChanges = useCallback(async () => {
+    const changes = state.pendingChanges;
+    if (changes.length === 0) return;
+    await withSession(() => api.publishChanges(changes));
+    setState((prev) => ({ ...prev, pendingChanges: [] }));
+  }, [state.pendingChanges, withSession]);
 
   const discardChanges = useCallback(() => {
     setState((prev) =>
@@ -445,196 +348,100 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateBrandConfig = useCallback(
-    (
+    async (
       brand: Brand,
       environment: Environment,
       config: BrandConfig,
       warnings: string[],
     ) => {
-      setState((prev) => {
-        const user =
-          prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-        const existing = prev.configs[brand]?.[environment] ?? {
-          config: emptyBrandConfig(),
-          warnings: [],
-        };
-        const nextConfig = cloneConfig(config);
-        const nextWarnings = [...warnings];
-        return {
-          ...prev,
-          configs: {
-            ...prev.configs,
-            [brand]: {
-              ...prev.configs[brand],
-              [environment]: {
-                config: nextConfig,
-                warnings: nextWarnings,
-              },
-            },
-          },
-          auditLog: [
-            audit(
-              user,
-              'config_update',
-              `Updated ${brand} ${environment} config`,
-              {
-                brand,
-                environment,
-                before: JSON.stringify(existing),
-                after: JSON.stringify({
-                  config: nextConfig,
-                  warnings: nextWarnings,
-                }),
-              },
-            ),
-            ...prev.auditLog,
-          ],
-        };
-      });
+      await withSession(() =>
+        api.updateBrandConfig(brand, environment, config, warnings),
+      );
     },
-    [],
+    [withSession],
   );
 
-  const addUser = useCallback((email: string, role: Role) => {
-    setState((prev) => {
-      const actor =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const trimmed = email.trim().toLowerCase();
-      if (prev.users.some((u) => u.email.toLowerCase() === trimmed)) return prev;
-      const user: User = { id: uuid(), email: trimmed, role };
-      return {
-        ...prev,
-        users: [...prev.users, user],
-        auditLog: [
-          audit(actor, 'user_add', `Added user ${trimmed} as ${role}`, {
-            after: `${trimmed} (${role})`,
-          }),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
+  const addUser = useCallback(
+    async (email: string, role: Role) => {
+      await withSession(() => api.addUser(email, role));
+    },
+    [withSession],
+  );
 
-  const changeUserRole = useCallback((userId: string, role: Role) => {
-    setState((prev) => {
-      const actor =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const target = prev.users.find((u) => u.id === userId);
-      if (!target || target.role === role) return prev;
-      return {
-        ...prev,
-        users: prev.users.map((u) => (u.id === userId ? { ...u, role } : u)),
-        auditLog: [
-          audit(
-            actor,
-            'user_role_change',
-            `Changed ${target.email} from ${target.role} to ${role}`,
-            {
-              before: target.role,
-              after: role,
-            },
-          ),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
+  const changeUserRole = useCallback(
+    async (userId: string, role: Role) => {
+      await withSession(() => api.changeUserRole(userId, role));
+    },
+    [withSession],
+  );
 
-  const removeUser = useCallback((userId: string) => {
-    setState((prev) => {
-      const actor =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const target = prev.users.find((u) => u.id === userId);
-      if (!target || target.id === actor.id) return prev;
-      return {
-        ...prev,
-        users: prev.users.filter((u) => u.id !== userId),
-        auditLog: [
-          audit(actor, 'user_remove', `Removed user ${target.email}`, {
-            before: `${target.email} (${target.role})`,
-          }),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
+  const removeUser = useCallback(
+    async (userId: string) => {
+      await withSession(() => api.removeUser(userId));
+    },
+    [withSession],
+  );
 
-  const setCurrentUser = useCallback((userId: string) => {
-    setState((prev) =>
-      prev.users.some((u) => u.id === userId)
-        ? { ...prev, currentUserId: userId }
-        : prev,
-    );
-  }, []);
+  const revertBrand = useCallback(
+    async (snapshotId: string) => {
+      await withSession(() => api.revertBrand(snapshotId));
+    },
+    [withSession],
+  );
 
-  const revertBrand = useCallback((snapshotId: string) => {
-    setState((prev) => {
-      const user =
-        prev.users.find((u) => u.id === prev.currentUserId) ?? prev.users[0];
-      const snap = prev.history.find((h) => h.id === snapshotId);
-      if (!snap) return prev;
-      const brand = snap.brand;
-      const nextFlags = prev.flags.map((flag) => {
-        const restored = snap.states[flag.id];
-        if (!restored) return flag;
-        return {
-          ...flag,
-          states: {
-            ...flag.states,
-            [brand]: {
-              Stage: restored.Stage,
-              Production: restored.Production,
-            },
-          },
-          updatedAt: new Date().toISOString(),
-        };
-      });
-      const next = { ...prev, flags: nextFlags };
-      const newSnap = snapshotBrand(
-        next,
-        brand,
-        user,
-        `Reverted to snapshot from ${new Date(snap.timestamp).toLocaleString()}`,
-      );
-      return {
-        ...next,
-        history: [newSnap, ...prev.history],
-        auditLog: [
-          audit(
-            user,
-            'config_revert',
-            `Reverted ${brand} to configuration from ${new Date(snap.timestamp).toLocaleString()}`,
-            {
-              brand,
-              before: snap.id,
-              after: newSnap.id,
-            },
-          ),
-          ...prev.auditLog,
-        ],
-      };
-    });
-  }, []);
-
-  const value: StoreContextValue = {
-    state,
-    currentUser,
-    createFlag,
-    updateFlag,
-    setFlagStatus,
-    deleteFlag,
-    stageToggle,
-    publishChanges,
-    discardChanges,
-    getEffectiveValue,
-    isPending,
-    updateBrandConfig,
-    addUser,
-    changeUserRole,
-    removeUser,
-    setCurrentUser,
-    revertBrand,
-  };
+  const value: StoreContextValue = useMemo(
+    () => ({
+      state,
+      currentUser,
+      authenticated: Boolean(currentUser),
+      authReady,
+      googleEnabled,
+      allowedDomain,
+      loading,
+      error,
+      authError,
+      logout,
+      createFlag,
+      updateFlag,
+      setFlagStatus,
+      deleteFlag,
+      stageToggle,
+      publishChanges,
+      discardChanges,
+      getEffectiveValue,
+      isPending,
+      updateBrandConfig,
+      addUser,
+      changeUserRole,
+      removeUser,
+      revertBrand,
+    }),
+    [
+      state,
+      currentUser,
+      authReady,
+      googleEnabled,
+      allowedDomain,
+      loading,
+      error,
+      authError,
+      logout,
+      createFlag,
+      updateFlag,
+      setFlagStatus,
+      deleteFlag,
+      stageToggle,
+      publishChanges,
+      discardChanges,
+      getEffectiveValue,
+      isPending,
+      updateBrandConfig,
+      addUser,
+      changeUserRole,
+      removeUser,
+      revertBrand,
+    ],
+  );
 
   return (
     <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

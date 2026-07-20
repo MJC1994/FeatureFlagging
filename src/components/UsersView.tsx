@@ -15,10 +15,12 @@ export function UsersView() {
     removeUser,
   } = useStore();
 
-  const canManage = canManageUsers(currentUser.role);
+  const canManage = canManageUsers(currentUser?.role ?? 'Developer');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('Developer');
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+
+  if (!currentUser) return null;
 
   const handleInvite = (e: FormEvent) => {
     e.preventDefault();
@@ -34,7 +36,8 @@ export function UsersView() {
         <div>
           <h1>Users</h1>
           <p className="view__subtitle">
-            Invite teammates and assign Developer, Admin, or Owner roles
+            Invite @ontrackretail.co.uk teammates and assign Developer, Admin, or
+            Owner roles. They sign in with Google.
           </p>
         </div>
         <div className="view__actions">
@@ -60,7 +63,7 @@ export function UsersView() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="colleague@example.com"
+              placeholder="colleague@ontrackretail.co.uk"
               required
             />
           </label>

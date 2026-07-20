@@ -6,6 +6,7 @@ import { ConfigView } from './components/ConfigView';
 import { UsersView } from './components/UsersView';
 import { AuditView } from './components/AuditView';
 import { HistoryView } from './components/HistoryView';
+import { LoginView } from './components/LoginView';
 import './App.css';
 
 const NAV: { id: View; label: string; icon: ReactNode }[] = [
@@ -28,7 +29,7 @@ const NAV: { id: View; label: string; icon: ReactNode }[] = [
       <svg viewBox="0 0 24 24" aria-hidden="true" className="nav__icon">
         <path
           fill="currentColor"
-          d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.5.42l-.36 2.54c-.59.22-1.14.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.3-.06.61-.06.94s.02.64.06.94L2.82 14.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.8c.24 0 .45-.18.5-.42l.36-2.54c.59-.22 1.14-.53 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"
+          d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.5.42l-.36 2.54c-.59.22-1.14.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.7 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.3-.06.61-.06.94s.02.64.06.94L2.82 14.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.49.4 1.04.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.8c.24 0 .45-.18.5.42l.36-2.54c.59-.22 1.14-.53 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"
         />
       </svg>
     ),
@@ -73,7 +74,25 @@ const NAV: { id: View; label: string; icon: ReactNode }[] = [
 
 function Shell() {
   const [view, setView] = useState<View>('flags');
-  const { state, currentUser, setCurrentUser } = useStore();
+  const {
+    currentUser,
+    loading,
+    authReady,
+    error,
+    logout,
+  } = useStore();
+
+  if (!authReady || loading) {
+    return (
+      <div className="app app--status">
+        <p>Loading Flagdeck…</p>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginView />;
+  }
 
   return (
     <div className="app">
@@ -101,23 +120,19 @@ function Shell() {
           ))}
         </nav>
 
-        <div className="sidebar__user" data-tour="acting-as">
-          <label className="field">
-            <span>Acting as</span>
-            <select
-              value={currentUser.id}
-              onChange={(e) => setCurrentUser(e.target.value)}
-            >
-              {state.users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.email} ({u.role})
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="sidebar__role-hint">
-            Switch users to preview role permissions.
-          </p>
+        <div className="sidebar__user" data-tour="signed-in">
+          <div className="sidebar__identity">
+            <div className="sidebar__email">{currentUser.email}</div>
+            <div className="sidebar__role">{currentUser.role}</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--block"
+            onClick={() => void logout()}
+          >
+            Sign out
+          </button>
+          {error && <p className="sidebar__role-hint">{error}</p>}
         </div>
       </aside>
 

@@ -10,7 +10,6 @@ export function HistoryView() {
   const { state, currentUser } = useStore();
   const [brand, setBrand] = useState<Brand>(BRANDS[0]);
   const [pendingRevert, setPendingRevert] = useState<string | null>(null);
-  const allowRevert = canRevert(currentUser.role);
 
   const snapshots = useMemo(
     () => state.history.filter((h) => h.brand === brand),
@@ -19,6 +18,8 @@ export function HistoryView() {
 
   const pending = snapshots.find((s) => s.id === pendingRevert);
 
+  if (!currentUser) return null;
+  const allowRevert = canRevert(currentUser.role);
   return (
     <div className="view">
       <header className="view__header">

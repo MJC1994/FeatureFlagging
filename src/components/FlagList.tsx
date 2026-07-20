@@ -74,7 +74,7 @@ export function FlagList() {
     });
   }, [state.flags, search, selectedTags, showDeprecated]);
 
-  const role = currentUser.role;
+  const role = currentUser?.role ?? 'Developer';
   const canCreate = canCreateFlag(role);
   const canEditMeta = canEditFlagMeta(role);
   const canStatus = canChangeStatus(role);
@@ -140,6 +140,8 @@ export function FlagList() {
       publishChanges,
     ],
   );
+
+  if (!currentUser) return null;
 
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) =>

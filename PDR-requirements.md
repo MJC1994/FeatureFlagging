@@ -33,10 +33,10 @@ Whitelabel rail apps share one product codebase across multiple brands. Feature 
 
 ### 1.4 Non-goals (current scope)
 
-- Live integration with a production config/feature API (platform is client-side persisted today)
+- Live integration with a production config/feature API (Flagdeck persists its own D1 store today)
 - Per-brand flag catalogues (flags are shared across all brands)
 - Automated Stage → Production bulk copy UI (removed from product; operators publish Production toggles individually via the draft/publish flow)
-- SSO / corporate identity provider
+- SSO / corporate identity provider beyond Google Workspace for `@ontrackretail.co.uk`
 - Real-time multi-user collaboration / conflict resolution
 
 ---
@@ -57,9 +57,9 @@ Whitelabel rail apps share one product codebase across multiple brands. Feature 
 - A user cannot change their own role (control disabled for their own account).
 - Users are invited by email and assigned exactly one role: Developer, Admin, or Owner.
 
-### 2.3 Acting-as (prototype)
+### 2.3 Sign-in
 
-The UI provides an “Acting as” switcher to simulate different users/roles for demos and permission verification. A production deployment would replace this with authenticated sessions.
+Users sign in with **Google** only. The Google account email must be `@ontrackretail.co.uk` and must already exist in the Flagdeck user roster (invited by an Owner).
 
 ---
 
@@ -264,14 +264,15 @@ At minimum:
 
 | Concern | Requirement |
 |---------|-------------|
-| Client | Single-page React application |
-| Persistence | Application state persisted client-side (e.g. `localStorage`) so refresh retains data |
-| Data store | Lightweight in-memory / JSON store suitable for prototype; replaceable with a backend later |
+| Client | Single-page React application (Vite) |
+| Backend | Cloudflare Worker API (`/api/*`) with D1 as source of truth |
+| Auth | Google OAuth only; email must be `@ontrackretail.co.uk` and invited |
+| Auth (session) | HttpOnly signed cookie; permissions enforced in the Worker |
+| Draft toggles | Pending flag changes remain client-side until Publish |
 | Branding of UI | Clear Stage vs Production visual distinction in flag controls |
 
 ### 10.1 Future production considerations (for PDR discussion)
 
-- Authenticated API backend as source of truth
 - Import/sync from live Stage/Production brand config endpoints
 - Export of Flagdeck state to the `config` / `features` / `warnings` API shape
 - Approval workflows / dual control for Production

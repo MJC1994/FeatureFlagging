@@ -20,9 +20,9 @@ export const TOURS: Record<View, TourStep[]> = {
       body: 'This short demo walks you through changing a feature flag and publishing it. You can skip anytime and replay from Welcome demo.',
     },
     {
-      target: '[data-tour="acting-as"]',
-      title: 'Roles matter',
-      body: 'You are acting as an Owner, so you can edit Stage and Production. Switch users later to see how Developers are Stage-only.',
+      target: '[data-tour="signed-in"]',
+      title: 'Signed in with Google',
+      body: 'Your Google Workspace account (@ontrackretail.co.uk) determines who you are. Owners invite colleagues before they can sign in.',
     },
     {
       target: '[data-tour="flags-list"]',
@@ -110,7 +110,7 @@ export const TOURS: Record<View, TourStep[]> = {
     {
       target: '[data-tour="users-table"]',
       title: 'Roster & roles',
-      body: 'Review who has access. Switch “Acting as” in the sidebar to feel how each role experiences the rest of the app.',
+      body: 'Review who has access. Only @ontrackretail.co.uk emails can be invited, and they sign in with Google.',
     },
   ],
   audit: [

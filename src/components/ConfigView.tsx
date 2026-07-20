@@ -12,27 +12,29 @@ export function ConfigView() {
   const [brand, setBrand] = useState<Brand>('Southeastern');
   const [environment, setEnvironment] = useState<Environment>('Stage');
   const [draft, setDraft] = useState<BrandConfig>(() =>
-    cloneConfig(state.configs[brand][environment].config),
+    cloneConfig(state.configs[brand]?.[environment]?.config ?? ({} as BrandConfig)),
   );
   const [warnings, setWarnings] = useState<string[]>(
-    () => [...state.configs[brand][environment].warnings],
+    () => [...(state.configs[brand]?.[environment]?.warnings ?? [])],
   );
   const [warningDraft, setWarningDraft] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const canEdit =
-    environment === 'Stage'
-      ? canEditStage(currentUser.role)
-      : canEditProduction(currentUser.role);
-
   useEffect(() => {
-    const entry = state.configs[brand][environment];
+    const entry = state.configs[brand]?.[environment];
+    if (!entry) return;
     setDraft(cloneConfig(entry.config));
     setWarnings([...entry.warnings]);
     setSaved(false);
     setWarningDraft('');
   }, [brand, environment, state.configs]);
 
+  if (!currentUser) return null;
+
+  const canEdit =
+    environment === 'Stage'
+      ? canEditStage(currentUser.role)
+      : canEditProduction(currentUser.role);
   const setNumber = (key: 'apiTimeoutInMilliseconds' | 'apiJPJourneyPlanTimeoutInMilliseconds', value: string) => {
     const n = Number(value);
     setDraft((prev) => ({
